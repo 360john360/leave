@@ -8,6 +8,8 @@ import {
 import { LEAVE_TYPES, ROLES_CONFIG, SHIFT_TEAMS_CONFIG } from '../constants';
 import { generateMockId, getDaysInMonth, addDays, formatISODate } from '../utils/dateUtils';
 
+const API_BASE_URL = 'http://localhost:8000/api';
+
 
 // --- LocalStorage Helpers ---
 const getFromStorage = <T,>(key: string, defaultValue: T): T => {
@@ -42,659 +44,594 @@ const initialMockEnvironments: Environment[] = [
   { id: 'env3', customerId: 'cust2', customerName: 'Beta Solutions', name: 'Development', requestInstructions: 'Self-service portal: dev-access.betasolutions.com' },
 ];
 
-// Initialize storage if empty
-if (!localStorage.getItem('users')) {
-  setToStorage('users', initialMockUsers);
-}
-if (!localStorage.getItem('customers')) {
-  setToStorage('customers', initialMockCustomers);
-}
-if (!localStorage.getItem('environments')) {
-  setToStorage('environments', initialMockEnvironments.map(env => ({
-    ...env,
-    customerName: initialMockCustomers.find(c => c.id === env.customerId)?.name || 'Unknown Customer'
-  })));
-}
-if (!localStorage.getItem('leaveRequests')) {
-  setToStorage('leaveRequests', []);
-}
-if (!localStorage.getItem('shifts')) {
-  // Add some initial shifts for shift users
-  const today = new Date();
-  const initialShifts: Shift[] = [];
-  const shiftUsers = initialMockUsers.filter(u => u.role === UserRole.VAR_SHIFT);
-  
-  shiftUsers.forEach((user, userIndex) => {
-    for (let i = -5; i < 15; i++) { // Generate shifts for a range of days around today
-        const shiftDate = addDays(today, i);
-        let shiftPeriod: ShiftPeriod | 'OFF' = 'OFF';
-        
-        // Simple alternating shift pattern for demo
-        if (user.team === ShiftTeam.A || user.team === ShiftTeam.C) { // Teams A & C
-            if ((i + userIndex*2) % 8 < 4) shiftPeriod = (i % 2 === 0) ? ShiftPeriod.AM : ShiftPeriod.PM; // 4 days on
-            else shiftPeriod = 'OFF'; // 4 days off
-        } else if (user.team === ShiftTeam.B || user.team === ShiftTeam.D) { // Teams B & D
-             if ((i + userIndex*2 + 4) % 8 < 4) shiftPeriod = (i % 2 === 0) ? ShiftPeriod.AM : ShiftPeriod.PM; // 4 days on (offset)
-             else shiftPeriod = 'OFF'; // 4 days off
-        }
-
-        if (shiftPeriod !== 'OFF') {
-            initialShifts.push({
-                id: generateMockId(),
-                date: formatISODate(shiftDate),
-                userId: user.id,
-                userName: user.name,
-                teamId: user.team,
-                shiftPeriod: shiftPeriod,
-            });
-        }
-    }
-  });
-   const bauUser = initialMockUsers.find(u => u.role === UserRole.VAR_BAU);
-    if(bauUser){
-        for(let i = -5; i < 15; i++){
-            const shiftDate = addDays(today, i);
-            const dayOfWeek = shiftDate.getDay();
-            if(dayOfWeek !== 0 && dayOfWeek !== 6){ // Mon-Fri
-                 initialShifts.push({
-                    id: generateMockId(),
-                    date: formatISODate(shiftDate),
-                    userId: bauUser.id,
-                    userName: bauUser.name,
-                    teamId: bauUser.team,
-                    shiftPeriod: ShiftPeriod.AM, // BAU works AM shifts
-                });
-            }
-        }
-    }
-
-
-  setToStorage('shifts', initialShifts);
-}
-if (!localStorage.getItem('accountAccess')) {
-  // Add some initial account access for Alice on Acme Corp Prod
-  const alice = initialMockUsers.find(u => u.email === 'alice@example.com');
-  const acmeProd = initialMockEnvironments.find(e => e.name === 'Production' && e.customerId === 'cust1');
-  if (alice && acmeProd) {
-    setToStorage('accountAccess', [{
-        userId: alice.id,
-        userName: alice.name,
-        environmentId: acmeProd.id,
-        status: AccountAccessStatusValue.GRANTED,
-        lastUpdatedAt: new Date().toISOString()
-    }]);
-  } else {
-    setToStorage('accountAccess', []);
-  }
-}
-if (!localStorage.getItem('notifications')) {
-  setToStorage('notifications', []);
-}
-if (!localStorage.getItem('shiftSwapRequests')) {
-  setToStorage('shiftSwapRequests', []);
-}
-if (!localStorage.getItem('auditLogs')) {
-  setToStorage('auditLogs', []);
-}
-if (!localStorage.getItem('generatedRota')) {
-  setToStorage('generatedRota', []);
-}
-
-
-// --- API Mock Functions ---
+// --- API Functions ---
 
 // Users
-export const getMockUsers = async (): Promise<User[]> => {
-  return new Promise(resolve => setTimeout(() => resolve(getFromStorage<User[]>('users', [])), 200));
+export const getUsers = async (): Promise<User[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/users`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data: User[] = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Failed to fetch users:", error);
+    throw error;
+  }
 };
 
-export const getMockUserById = async (userId: string): Promise<User | null> => {
-  const users = await getMockUsers();
-  return users.find(u => u.id === userId) || null;
+export const getUserById = async (userId: string): Promise<User | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/${userId}`);
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data: User = await response.json();
+    return data;
+  } catch (error) {
+    console.error(`Failed to fetch user ${userId}:`, error);
+    throw error;
+  }
 };
 
-export const loginMockUser = async (email: string): Promise<User | null> => {
-    const users = await getMockUsers();
-    // In a real app, password would be checked.
-    const user = users.find(u => u.email.toLowerCase() === email.toLowerCase());
-    return user || null;
+export const loginUser = async (email: string, password?: string): Promise<User | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ email, password }), // Include password if backend requires it
+    });
+    if (!response.ok) {
+      if (response.status === 401 || response.status === 404) return null; // Unauthorized or Not Found
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const data: User = await response.json(); // Or { user: User, token: string }
+    // If backend returns a token, it should be handled here or in useAuth
+    return data;
+  } catch (error) {
+    console.error("Login failed:", error);
+    throw error;
+  }
 };
 
-export const addMockUser = async (userData: Omit<User, 'id'>): Promise<User> => {
-  const users = await getMockUsers();
-  const newUser: User = { ...userData, id: generateMockId() };
-  users.push(newUser);
-  setToStorage('users', users);
-  await logAuditEventMock(null, 'USER_CREATED', `Admin created user: ${newUser.name} (Role: ${ROLES_CONFIG[newUser.role].name})`);
-  return newUser;
+export const addUser = async (userData: Omit<User, 'id'>, token?: string): Promise<User> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(userData),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const newUser: User = await response.json();
+    // Logging should ideally be handled by the backend or a separate logging service
+    // await logAuditEventMock(null, 'USER_CREATED', `Admin created user: ${newUser.name} (Role: ${ROLES_CONFIG[newUser.role].name})`);
+    return newUser;
+  } catch (error) {
+    console.error("Failed to add user:", error);
+    throw error;
+  }
 };
 
-export const updateMockUser = async (userId: string, updates: Partial<User>): Promise<User | null> => {
-  let users = await getMockUsers();
-  const userIndex = users.findIndex(u => u.id === userId);
-  if (userIndex === -1) return null;
-  const originalUser = { ...users[userIndex] };
-  users[userIndex] = { ...users[userIndex], ...updates };
-  setToStorage('users', users);
-  await logAuditEventMock(null, 'USER_UPDATED', `Admin updated user: ${users[userIndex].name}. Changes: ${JSON.stringify(updates)}`);
-  return users[userIndex];
+export const updateUser = async (userId: string, updates: Partial<User>, token?: string): Promise<User | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/users/${userId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const updatedUser: User = await response.json();
+    // Logging should ideally be handled by the backend
+    // await logAuditEventMock(null, 'USER_UPDATED', `Admin updated user: ${updatedUser.name}. Changes: ${JSON.stringify(updates)}`);
+    return updatedUser;
+  } catch (error) {
+    console.error(`Failed to update user ${userId}:`, error);
+    throw error;
+  }
 };
 
 // Leave Requests
-export const getMockLeaveRequests = async (filters?: { userId?: string, status?: LeaveRequestStatus, teamId?: ShiftTeam }): Promise<LeaveRequest[]> => {
-  let requests = getFromStorage<LeaveRequest[]>('leaveRequests', []);
-  const users = await getMockUsers();
+export const getLeaveRequests = async (filters?: { userId?: string, status?: LeaveRequestStatus, teamId?: ShiftTeam }, token?: string): Promise<LeaveRequest[]> => {
+  try {
+    const queryParams = new URLSearchParams();
+    if (filters?.userId) queryParams.append('userId', filters.userId);
+    if (filters?.status) queryParams.append('status', filters.status);
+    if (filters?.teamId) queryParams.append('teamId', filters.teamId);
 
-  requests = requests.map(req => ({
-      ...req,
-      userName: users.find(u => u.id === req.userId)?.name || 'Unknown User'
-  }));
-
-  if (filters?.userId) {
-    requests = requests.filter(r => r.userId === filters.userId);
-  }
-  if (filters?.status) {
-    requests = requests.filter(r => r.status === filters.status);
-  }
-  // TODO: Implement teamId filter by fetching users of that team then filtering requests by those userIds
-  return new Promise(resolve => setTimeout(() => resolve(requests.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())), 200));
-};
-
-export const createMockLeaveRequest = async (requestData: Omit<LeaveRequest, 'id' | 'status' | 'createdAt' | 'userName'>, requesterId: string): Promise<LeaveRequest> => {
-  const requests = getFromStorage<LeaveRequest[]>('leaveRequests', []);
-  const requester = await getMockUserById(requesterId);
-  const newRequest: LeaveRequest = {
-    ...requestData,
-    id: generateMockId(),
-    status: LeaveRequestStatus.PENDING,
-    createdAt: new Date().toISOString(),
-    userName: requester?.name || 'Unknown User'
-  };
-  requests.push(newRequest);
-  setToStorage('leaveRequests', requests);
-  await logAuditEventMock(requesterId, 'LEAVE_REQUEST_CREATED', `User ${newRequest.userName} requested ${LEAVE_TYPES[newRequest.leaveTypeId].name} from ${newRequest.startDate} to ${newRequest.endDate}.`);
-  // Notify manager (simplified: find first manager)
-  const manager = (await getMockUsers()).find(u => u.role === UserRole.MANAGER);
-  if (manager) {
-    await addNotificationMock({
-        userId: manager.id, // Target manager
-        message: `New leave request from ${newRequest.userName} for ${LEAVE_TYPES[newRequest.leaveTypeId].name} (${newRequest.startDate} to ${newRequest.endDate}).`,
-        type: 'info',
-        link: `/manager/approve-leave` // Could be specific link like /manager/approve-leave?requestId=${newRequest.id}
+    const response = await fetch(`${API_BASE_URL}/leave-requests?${queryParams.toString()}`, {
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
     });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const requests: LeaveRequest[] = await response.json();
+    // userName should be populated by the backend or handled by joining with user data on frontend if necessary
+    return requests.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (error) {
+    console.error("Failed to fetch leave requests:", error);
+    throw error;
   }
-  return newRequest;
 };
 
-export const updateMockLeaveRequestStatus = async (requestId: string, status: LeaveRequestStatus, managerId: string): Promise<LeaveRequest | null> => {
-  const requests = getFromStorage<LeaveRequest[]>('leaveRequests', []);
-  const requestIndex = requests.findIndex(r => r.id === requestId);
-  if (requestIndex === -1) return null;
-  
-  const updatedRequest = { ...requests[requestIndex], status, managerId };
-  requests[requestIndex] = updatedRequest;
-  setToStorage('leaveRequests', requests);
-  
-  const manager = await getMockUserById(managerId);
-  await logAuditEventMock(managerId, `LEAVE_REQUEST_${status}`, `Manager ${manager?.name || 'Unknown'} ${status.toLowerCase()} leave request ID ${requestId} for ${updatedRequest.userName}.`);
+export const createLeaveRequest = async (requestData: Omit<LeaveRequest, 'id' | 'status' | 'createdAt' | 'userName'>, requesterId: string, token?: string): Promise<LeaveRequest> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/leave-requests`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify({ ...requestData, userId: requesterId }), // Ensure userId is part of the payload
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const newRequest: LeaveRequest = await response.json();
+    // Logging and notifications should be handled by the backend
+    return newRequest;
+  } catch (error) {
+    console.error("Failed to create leave request:", error);
+    throw error;
+  }
+};
 
-  await addNotificationMock({
-    userId: updatedRequest.userId,
-    message: `Your leave request for ${LEAVE_TYPES[updatedRequest.leaveTypeId].name} (${updatedRequest.startDate} to ${updatedRequest.endDate}) has been ${status.toLowerCase()}.`,
-    type: status === LeaveRequestStatus.APPROVED ? 'success' : (status === LeaveRequestStatus.REJECTED ? 'error' : 'info'),
-    link: `/leave`
-  });
-  return updatedRequest;
+export const updateLeaveRequestStatus = async (requestId: string, status: LeaveRequestStatus, managerId: string, token?: string): Promise<LeaveRequest | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/leave-requests/${requestId}/status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify({ status, managerId }),
+    });
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const updatedRequest: LeaveRequest = await response.json();
+    // Logging and notifications should be handled by the backend
+    return updatedRequest;
+  } catch (error) {
+    console.error(`Failed to update leave request ${requestId}:`, error);
+    throw error;
+  }
 };
 
 
 // Calendar Events (combines leaves and shifts)
-export const getMockCalendarEvents = async (year: number, month: number, currentUserId: string): Promise<CalendarEvent[]> => {
-  const events: CalendarEvent[] = [];
-  const allLeaveRequests = getFromStorage<LeaveRequest[]>('leaveRequests', []);
-  const allShifts = getFromStorage<Shift[]>('shifts', []);
-  const users = await getMockUsers();
-  const currentUser = users.find(u => u.id === currentUserId);
-
-  const startDate = new Date(year, month, 1);
-  const endDate = new Date(year, month + 1, 0); // Last day of month
-
-  // Filter leaves for the month
-  const monthLeaves = allLeaveRequests.filter(lr => {
-    const lrStart = new Date(lr.startDate);
-    const lrEnd = new Date(lr.endDate);
-    return (lrStart <= endDate && lrEnd >= startDate) && (lr.status === LeaveRequestStatus.APPROVED || lr.status === LeaveRequestStatus.PENDING);
-  });
-
-  monthLeaves.forEach(lr => {
-    const user = users.find(u => u.id === lr.userId);
-    const leaveTypeDetails = LEAVE_TYPES[lr.leaveTypeId];
-    const titlePrefix = lr.status === LeaveRequestStatus.PENDING ? "RL: " : `${leaveTypeDetails.shortCode}: `;
-    
-    // Create event for each day of the leave period within the current month
-    let currentDateIter = new Date(lr.startDate > startDate.toISOString() ? lr.startDate : startDate.toISOString().substring(0,10) );
-    const leaveEndDate = new Date(lr.endDate < endDate.toISOString() ? lr.endDate : endDate.toISOString().substring(0,10) );
-
-    while(currentDateIter <= leaveEndDate) {
-        events.push({
-            id: `leave-${lr.id}-${formatISODate(currentDateIter)}`,
-            date: formatISODate(currentDateIter),
-            type: 'leave',
-            title: `${titlePrefix}${user?.name || 'Unknown'}`,
-            color: lr.status === LeaveRequestStatus.PENDING ? 'bg-status-pending text-black' : leaveTypeDetails.color,
-            userId: lr.userId,
-            leaveRequest: lr,
-        });
-        currentDateIter = addDays(currentDateIter, 1);
-    }
-  });
-
-  // Filter shifts for the month (simplified, assumes shifts are per user or per team)
-  const monthShifts = allShifts.filter(s => {
-    const shiftDate = new Date(s.date);
-    return shiftDate >= startDate && shiftDate <= endDate;
-  });
-
-  monthShifts.forEach(s => {
-    let title = '';
-    let color = 'bg-gray-200';
-    if(s.userId) {
-        const user = users.find(u => u.id === s.userId);
-        title = `${s.shiftPeriod} Shift: ${user?.name || 'Unknown'}`;
-        color = s.shiftPeriod === ShiftPeriod.AM ? 'bg-shift-day text-black' : 'bg-shift-night text-white';
-    } else if (s.teamId) {
-        title = `${s.shiftPeriod} Shift: ${SHIFT_TEAMS_CONFIG[s.teamId]?.name || 'Unknown Team'}`;
-        color = s.shiftPeriod === ShiftPeriod.AM ? 'bg-blue-100 text-blue-800' : 'bg-indigo-200 text-indigo-800';
-    }
-    events.push({
-        id: `shift-${s.id}`,
-        date: s.date,
-        type: 'shift',
-        title: title,
-        color: color,
-        userId: s.userId,
-        shift: s,
+export const getCalendarEvents = async (year: number, month: number, teamId?: string, token?: string): Promise<CalendarEvent[]> => {
+  try {
+    const queryParams = new URLSearchParams({
+      year: year.toString(),
+      month: (month + 1).toString(), // Assuming backend expects 1-indexed month
     });
-  });
-  
-  return new Promise(resolve => setTimeout(() => resolve(events), 300));
+    if (teamId) queryParams.append('teamId', teamId);
+
+    const response = await fetch(`${API_BASE_URL}/calendar-events?${queryParams.toString()}`, {
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const events: CalendarEvent[] = await response.json();
+    // Backend should provide all necessary fields including color, title, etc.
+    // Or, additional client-side processing might be needed if backend returns raw data.
+    return events;
+  } catch (error) {
+    console.error("Failed to fetch calendar events:", error);
+    throw error;
+  }
 };
 
 
 // Shift Rota
-export const generateMockRota = async (year: number, startingTeamAOnDayShift: Date): Promise<TeamShiftAssignment[]> => {
-  const rota: TeamShiftAssignment[] = [];
-  // Basic 4-on/4-off logic (simplified)
-  // Team A (Day), Team B (Night) for 4 days
-  // Team C (Day), Team D (Night) for next 4 days
-  let currentDateIter = new Date(year, 0, 1); // Start from Jan 1st of the year
-  const rotaEndDate = new Date(year, 11, 31);
-  
-  let cycleDay = 0; // Day within the 8-day cycle (0-7)
-  
-  currentDateIter = new Date(startingTeamAOnDayShift);
-
-
-  while (currentDateIter <= rotaEndDate) {
-    let dayTeam: ShiftTeam | null = null;
-    let nightTeam: ShiftTeam | null = null;
-
-    if (cycleDay >= 0 && cycleDay <= 3) { // Days 1-4 of cycle
-      dayTeam = ShiftTeam.A;
-      nightTeam = ShiftTeam.B;
-    } else { // Days 5-8 of cycle
-      dayTeam = ShiftTeam.C;
-      nightTeam = ShiftTeam.D;
-    }
-    
-    rota.push({
-      date: formatISODate(currentDateIter),
-      dayShiftTeam: dayTeam,
-      nightShiftTeam: nightTeam,
+export const generateRota = async (year: number, startingTeamAOnDayShift: Date, token?: string): Promise<TeamShiftAssignment[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/rota/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify({ year, startingTeamAOnDayShift: formatISODate(startingTeamAOnDayShift) }),
     });
-
-    currentDateIter = addDays(currentDateIter, 1);
-    cycleDay = (cycleDay + 1) % 8;
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const rota: TeamShiftAssignment[] = await response.json();
+    // Logging handled by backend
+    return rota;
+  } catch (error) {
+    console.error("Failed to generate rota:", error);
+    throw error;
   }
-  setToStorage('generatedRota', rota);
-  await logAuditEventMock(null, 'ROTA_GENERATED', `Generated shift rota for ${year}.`);
-  return rota;
 };
 
-export const getGeneratedRotaMock = async (year: number): Promise<TeamShiftAssignment[]> => {
-    return getFromStorage<TeamShiftAssignment[]>('generatedRota', []);
+export const getGeneratedRota = async (year: number, token?: string): Promise<TeamShiftAssignment[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/rota?year=${year}`, { // Assuming endpoint /rota for GET
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    return await response.json();
+  } catch (error) {
+    console.error(`Failed to get generated rota for year ${year}:`, error);
+    throw error;
+  }
 };
 
 // Shift Swaps
-export const getMockShiftSwapRequests = async (userId: string): Promise<ShiftSwapRequest[]> => {
-  const swaps = getFromStorage<ShiftSwapRequest[]>('shiftSwapRequests', []);
-  const users = await getMockUsers();
-  return swaps
-    .filter(s => s.requesterId === userId || s.responderId === userId)
-    .map(s => ({
-        ...s,
-        requesterName: users.find(u => u.id === s.requesterId)?.name,
-        responderName: users.find(u => u.id === s.responderId)?.name,
-    }))
-    .sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-};
-
-export const createMockShiftSwapRequest = async (data: Omit<ShiftSwapRequest, 'id' | 'status' | 'createdAt' | 'requesterName' | 'responderName'>): Promise<ShiftSwapRequest> => {
-  const swaps = getFromStorage<ShiftSwapRequest[]>('shiftSwapRequests', []);
-  const users = await getMockUsers();
-  const newSwap: ShiftSwapRequest = {
-    ...data,
-    id: generateMockId(),
-    status: 'PENDING',
-    createdAt: new Date().toISOString(),
-    requesterName: users.find(u => u.id === data.requesterId)?.name,
-    responderName: users.find(u => u.id === data.responderId)?.name,
-  };
-  swaps.push(newSwap);
-  setToStorage('shiftSwapRequests', swaps);
-  await logAuditEventMock(data.requesterId, 'SHIFT_SWAP_REQUESTED', `User ${newSwap.requesterName} requested shift swap with ${newSwap.responderName}.`);
-  await addNotificationMock({
-      userId: newSwap.responderId,
-      message: `${newSwap.requesterName} has requested a shift swap with you.`,
-      type: 'info',
-      link: `/shift-swaps?swapId=${newSwap.id}`
-  });
-  return newSwap;
-};
-
-export const respondMockShiftSwapRequest = async (swapId: string, responderId: string, accepted: boolean): Promise<ShiftSwapRequest | null> => {
-  const swaps = getFromStorage<ShiftSwapRequest[]>('shiftSwapRequests', []);
-  const swapIndex = swaps.findIndex(s => s.id === swapId && s.responderId === responderId);
-  if (swapIndex === -1) return null;
-
-  swaps[swapIndex].status = accepted ? 'ACCEPTED' : 'REJECTED';
-  setToStorage('shiftSwapRequests', swaps);
-
-  const updatedSwap = swaps[swapIndex];
-  
-  if (accepted) {
-    let allShifts = getFromStorage<Shift[]>('shifts', []);
-    const reqShiftIndex = allShifts.findIndex(s => s.id === updatedSwap.requesterShiftId);
-    const resShiftIndex = allShifts.findIndex(s => s.id === updatedSwap.responderShiftId);
-
-    if (reqShiftIndex !== -1 && resShiftIndex !== -1) {
-      const tempUserId = allShifts[reqShiftIndex].userId;
-      allShifts[reqShiftIndex].userId = allShifts[resShiftIndex].userId;
-      allShifts[resShiftIndex].userId = tempUserId;
-      const tempUserName = allShifts[reqShiftIndex].userName;
-      allShifts[reqShiftIndex].userName = allShifts[resShiftIndex].userName;
-      allShifts[resShiftIndex].userName = tempUserName;
-      setToStorage('shifts', allShifts);
-    }
-  }
-
-  await logAuditEventMock(responderId, `SHIFT_SWAP_${accepted ? 'ACCEPTED' : 'REJECTED'}`, `User ${updatedSwap.responderName} ${accepted ? 'accepted' : 'rejected'} shift swap with ${updatedSwap.requesterName}.`);
-  
-  await addNotificationMock({
-    userId: updatedSwap.requesterId,
-    message: `Your shift swap request with ${updatedSwap.responderName} was ${accepted ? 'accepted' : 'rejected'}.`,
-    type: accepted ? 'success' : 'error',
-    link: `/shift-swaps`
-  });
-  const manager = (await getMockUsers()).find(u => u.role === UserRole.MANAGER);
-  if (manager && accepted) {
-     await addNotificationMock({
-        userId: manager.id,
-        message: `Shift swap between ${updatedSwap.requesterName} and ${updatedSwap.responderName} completed.`,
-        type: 'info',
+export const getShiftSwapRequests = async (userId: string, token?: string): Promise<ShiftSwapRequest[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/shift-swaps?userId=${userId}`, {
+      headers: {
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
     });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const swaps: ShiftSwapRequest[] = await response.json();
+    // Names should be populated by backend or joined on client-side
+    return swaps.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (error) {
+    console.error("Failed to fetch shift swap requests:", error);
+    throw error;
   }
-  return updatedSwap;
+};
+
+export const createShiftSwapRequest = async (data: Omit<ShiftSwapRequest, 'id' | 'status' | 'createdAt' | 'requesterName' | 'responderName'>, token?: string): Promise<ShiftSwapRequest> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/shift-swaps`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const newSwap: ShiftSwapRequest = await response.json();
+    // Logging and notifications handled by backend
+    return newSwap;
+  } catch (error) {
+    console.error("Failed to create shift swap request:", error);
+    throw error;
+  }
+};
+
+export const respondShiftSwapRequest = async (swapId: string, responderId: string, accepted: boolean, token?: string): Promise<ShiftSwapRequest | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/shift-swaps/${swapId}/respond`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify({ responderId, accepted }),
+    });
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const updatedSwap: ShiftSwapRequest = await response.json();
+    // Shift updates, logging, and notifications handled by backend
+    return updatedSwap;
+  } catch (error) {
+    console.error(`Failed to respond to shift swap request ${swapId}:`, error);
+    throw error;
+  }
 };
 
 
 // Customers & Environments
-export const getMockCustomers = async (): Promise<Customer[]> => {
-  return getFromStorage<Customer[]>('customers', []);
-};
-
-export const addMockCustomer = async (customerData: Omit<Customer, 'id'>): Promise<Customer> => {
-  const customers = getFromStorage<Customer[]>('customers', []);
-  const newCustomer: Customer = { ...customerData, id: generateMockId() };
-  customers.push(newCustomer);
-  setToStorage('customers', customers);
-  await logAuditEventMock(null, 'CUSTOMER_CREATED', `Admin created customer: ${newCustomer.name}.`);
-  return newCustomer;
-};
-
-export const getMockEnvironments = async (customerId?: string): Promise<Environment[]> => {
-  let environments = getFromStorage<Environment[]>('environments', []);
-  const customers = await getMockCustomers();
-  environments = environments.map(env => ({
-      ...env,
-      customerName: customers.find(c => c.id === env.customerId)?.name || 'Unknown Customer'
-  }));
-  if (customerId) {
-    return environments.filter(e => e.customerId === customerId);
+export const getCustomers = async (token?: string): Promise<Customer[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/customers`, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    console.error("Failed to fetch customers:", error);
+    throw error;
   }
-  return environments;
 };
 
-export const addMockEnvironment = async (envData: Omit<Environment, 'id' | 'customerName'>): Promise<Environment> => {
-  const environments = getFromStorage<Environment[]>('environments', []);
-  const customers = await getMockCustomers();
-  const newEnv: Environment = { 
-      ...envData, 
-      id: generateMockId(),
-      customerName: customers.find(c => c.id === envData.customerId)?.name || 'Unknown Customer'
-  };
-  environments.push(newEnv);
-  setToStorage('environments', environments);
-  await logAuditEventMock(null, 'ENVIRONMENT_CREATED', `Admin created environment: ${newEnv.name} for customer ${newEnv.customerName}.`);
-  return newEnv;
+export const addCustomer = async (customerData: Omit<Customer, 'id'>, token?: string): Promise<Customer> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/customers`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(customerData),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const newCustomer: Customer = await response.json();
+    // Logging by backend
+    return newCustomer;
+  } catch (error) {
+    console.error("Failed to add customer:", error);
+    throw error;
+  }
 };
 
-export const updateMockEnvironment = async (envId: string, updates: Partial<Omit<Environment, 'id' | 'customerId' | 'customerName'>>): Promise<Environment | null> => {
-    let environments = getFromStorage<Environment[]>('environments', []);
-    const envIndex = environments.findIndex(e => e.id === envId);
-    if (envIndex === -1) return null;
-    environments[envIndex] = { ...environments[envIndex], ...updates };
-    setToStorage('environments', environments);
-    await logAuditEventMock(null, 'ENVIRONMENT_UPDATED', `Admin updated environment: ${environments[envIndex].name}. Changes: ${JSON.stringify(updates)}`);
-    return environments[envIndex];
+export const getEnvironments = async (customerId?: string, token?: string): Promise<Environment[]> => {
+  try {
+    let url = `${API_BASE_URL}/environments`;
+    if (customerId) { // Assuming backend can filter by customerId if provided as query param
+      url = `${API_BASE_URL}/customers/${customerId}/environments`;
+    }
+    const response = await fetch(url, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const environments: Environment[] = await response.json();
+    // customerName should be populated by backend
+    return environments;
+  } catch (error) {
+    console.error("Failed to fetch environments:", error);
+    throw error;
+  }
+};
+
+export const addEnvironment = async (envData: Omit<Environment, 'id' | 'customerName'>, token?: string): Promise<Environment> => {
+  try {
+    // POST to /api/customers/{customerId}/environments as per README
+    const response = await fetch(`${API_BASE_URL}/customers/${envData.customerId}/environments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(envData),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const newEnv: Environment = await response.json();
+    // Logging by backend
+    return newEnv;
+  } catch (error) {
+    console.error("Failed to add environment:", error);
+    throw error;
+  }
+};
+
+export const updateEnvironment = async (envId: string, updates: Partial<Omit<Environment, 'id' | 'customerId' | 'customerName'>>, token?: string): Promise<Environment | null> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/environments/${envId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    const updatedEnv: Environment = await response.json();
+    // Logging by backend
+    return updatedEnv;
+  } catch (error) {
+    console.error(`Failed to update environment ${envId}:`, error);
+    throw error;
+  }
 };
 
 
 // Account Access
-export const getMockAccountAccess = async (params: { environmentId?: string; userId?: string }): Promise<AccountAccess[]> => {
-  const allAccess = getFromStorage<AccountAccess[]>('accountAccess', []);
-  const users = await getMockUsers();
-  let filteredAccess = allAccess;
+export const getAccountAccess = async (params: { environmentId?: string; userId?: string }, token?: string): Promise<AccountAccess[]> => {
+  try {
+    const queryParams = new URLSearchParams();
+    if (params.userId) queryParams.append('userId', params.userId);
+    // Endpoint from README: GET /api/environments/{environmentId}/access-status?userId={optionalUserId}
+    // This implies environmentId is mandatory path param if filtering by it.
+    // If only userId is given, we might need a different endpoint or backend logic.
+    // For now, let's assume if environmentId is present, we use that endpoint.
+    let url = `${API_BASE_URL}/account-access`; // General endpoint, needs backend definition
+    if (params.environmentId) {
+        url = `${API_BASE_URL}/environments/${params.environmentId}/access-status?${queryParams.toString()}`;
+    } else if(params.userId) {
+        // This case needs a defined backend endpoint, e.g. /users/{userId}/account-access
+        // Or the backend /account-access needs to support userId query param
+         url = `${API_BASE_URL}/account-access?${queryParams.toString()}`;
+    }
 
-  if (params.userId) {
-    filteredAccess = filteredAccess.filter(a => a.userId === params.userId);
+
+    const response = await fetch(url, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const accessList: AccountAccess[] = await response.json();
+    // userName should be populated by backend
+    return accessList;
+  } catch (error) {
+    console.error("Failed to fetch account access:", error);
+    throw error;
   }
-  if (params.environmentId) {
-    filteredAccess = filteredAccess.filter(a => a.environmentId === params.environmentId);
-  }
-  
-  return filteredAccess.map(acc => ({
-    ...acc,
-    userName: users.find(u => u.id === acc.userId)?.name || 'Unknown User'
-  }));
 };
 
 
-export const updateMockAccountAccessStatus = async (userId: string, environmentId: string, status: AccountAccessStatusValue): Promise<AccountAccess> => {
-  let allAccess = getFromStorage<AccountAccess[]>('accountAccess', []);
-  const accessIndex = allAccess.findIndex(a => a.userId === userId && a.environmentId === environmentId);
-  const user = await getMockUserById(userId);
-  const environment = (await getMockEnvironments()).find(e => e.id === environmentId);
-
-  const updatedAccess: AccountAccess = {
-    userId,
-    userName: user?.name,
-    environmentId,
-    status,
-    lastUpdatedAt: new Date().toISOString(),
-  };
-
-  if (accessIndex !== -1) {
-    allAccess[accessIndex] = updatedAccess;
-  } else {
-    allAccess.push(updatedAccess);
+export const updateAccountAccessStatus = async (userId: string, environmentId: string, status: AccountAccessStatusValue, token?: string): Promise<AccountAccess> => {
+  try {
+    // PUT /api/users/{userId}/environments/{environmentId}/access-status
+    const response = await fetch(`${API_BASE_URL}/users/${userId}/environments/${environmentId}/access-status`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token && { 'Authorization': `Bearer ${token}` }),
+      },
+      body: JSON.stringify({ status }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const updatedAccess: AccountAccess = await response.json();
+    // Logging by backend
+    return updatedAccess;
+  } catch (error) {
+    console.error(`Failed to update account access for user ${userId} on env ${environmentId}:`, error);
+    throw error;
   }
-  setToStorage('accountAccess', allAccess);
-  await logAuditEventMock(userId, 'ACCOUNT_ACCESS_UPDATED', `User ${user?.name} updated access for environment ${environment?.name} (${environment?.customerName}) to ${status}.`);
-  return updatedAccess;
 };
 
 // Notifications
-export const getNotificationsForUserMock = async (userId: string): Promise<NotificationMessage[]> => {
-  const allNotifications = getFromStorage<NotificationMessage[]>('notifications', []);
-  return allNotifications.filter(n => n.userId === userId).sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-};
-
-export const addNotificationMock = async (data: Omit<NotificationMessage, 'id' | 'createdAt' | 'isRead'>): Promise<NotificationMessage> => {
-  const notifications = getFromStorage<NotificationMessage[]>('notifications', []);
-  const newNotification: NotificationMessage = {
-    ...data,
-    id: generateMockId(),
-    isRead: false,
-    createdAt: new Date().toISOString(),
-  };
-  notifications.push(newNotification);
-  setToStorage('notifications', notifications);
-  return newNotification;
-};
-
-export const markNotificationAsReadMock = async (notificationId: string): Promise<boolean> => {
-  const notifications = getFromStorage<NotificationMessage[]>('notifications', []);
-  const index = notifications.findIndex(n => n.id === notificationId);
-  if (index !== -1) {
-    notifications[index].isRead = true;
-    setToStorage('notifications', notifications);
-    return true;
+export const getNotificationsForUser = async (userId: string, token?: string): Promise<NotificationMessage[]> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/notifications?userId=${userId}`, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const notifications: NotificationMessage[] = await response.json();
+    return notifications.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (error) {
+    console.error(`Failed to fetch notifications for user ${userId}:`, error);
+    throw error;
   }
-  return false;
+};
+
+// addNotification is typically a backend-driven action, not directly called by client unless it's a specific use case.
+// Notifications are usually created by other actions (e.g. new leave request -> notify manager).
+// If client needs to create a notification (e.g. custom user alert), an endpoint would be needed.
+// For now, this function might not be directly replaceable if it was for mock data generation.
+// Assuming a POST /notifications endpoint if client-side creation is needed.
+export const addNotification = async (data: Omit<NotificationMessage, 'id' | 'createdAt' | 'isRead'>, token?: string): Promise<NotificationMessage> => {
+    try {
+        const response = await fetch(`${API_BASE_URL}/notifications`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                ...(token && { 'Authorization': `Bearer ${token}` }),
+            },
+            body: JSON.stringify(data),
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error("Failed to add notification:", error);
+        throw error;
+    }
+};
+
+
+export const markNotificationAsRead = async (notificationId: string, token?: string): Promise<boolean> => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/notifications/${notificationId}/read`, {
+      method: 'PUT',
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) {
+        if(response.status === 404) return false;
+        throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    // Assuming backend returns success status or the updated notification.
+    // For boolean, we can check response.ok or specific success payload.
+    return true;
+  } catch (error) {
+    console.error(`Failed to mark notification ${notificationId} as read:`, error);
+    throw error;
+  }
 };
 
 // Audit Log
-export const logAuditEventMock = async (userId: string | null, actionType: string, details: string): Promise<AuditLogEntry> => {
-  const logs = getFromStorage<AuditLogEntry[]>('auditLogs', []);
-  const user = userId ? await getMockUserById(userId) : null;
-  const newLog: AuditLogEntry = {
-    id: generateMockId(),
-    timestamp: new Date().toISOString(),
-    userId: userId || undefined,
-    userName: user?.name || (userId === null ? 'System' : 'Unknown User'),
-    actionType,
-    details,
-  };
-  logs.push(newLog);
-  setToStorage('auditLogs', logs);
-  return newLog;
-};
+// logAuditEvent is purely a backend concern. Client should not directly log audits.
+// Audits are typically logged by the backend upon successful completion of an action.
+// This function will be removed from the client-side API service.
 
-export const getMockAuditLogs = async (filters?: { userId?: string, actionType?: string, dateFrom?: string, dateTo?: string }): Promise<AuditLogEntry[]> => {
-  let logs = getFromStorage<AuditLogEntry[]>('auditLogs', []);
-  if (filters?.userId) {
-    logs = logs.filter(log => log.userId === filters.userId);
+export const getAuditLogs = async (filters?: { userId?: string, actionType?: string, dateFrom?: string, dateTo?: string }, token?: string): Promise<AuditLogEntry[]> => {
+  try {
+    const queryParams = new URLSearchParams();
+    if (filters?.userId) queryParams.append('userId', filters.userId);
+    if (filters?.actionType) queryParams.append('actionType', filters.actionType);
+    if (filters?.dateFrom) queryParams.append('dateFrom', filters.dateFrom);
+    if (filters?.dateTo) queryParams.append('dateTo', filters.dateTo);
+
+    const response = await fetch(`${API_BASE_URL}/audit-logs?${queryParams.toString()}`, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const logs: AuditLogEntry[] = await response.json();
+    return logs.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  } catch (error) {
+    console.error("Failed to fetch audit logs:", error);
+    throw error;
   }
-  if (filters?.actionType) {
-    logs = logs.filter(log => log.actionType.toLowerCase().includes(filters.actionType!.toLowerCase()));
-  }
-  // TODO: Add date filters
-  return logs.sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 };
 
 // Reports
-export const getMockLeaveSummaryReport = async (startDate: string, endDate: string): Promise<any[]> => {
-  // This is a complex aggregation. Mock a simplified version.
-  const leaveRequests = (await getMockLeaveRequests()).filter(lr => 
-    lr.status === LeaveRequestStatus.APPROVED && lr.startDate >= startDate && lr.endDate <= endDate
-  );
-  const users = await getMockUsers();
-  
-  const summary: {[userId: string]: { userName: string, totalDays: number, [leaveType: string]: number | string }} = {};
-
-  for (const lr of leaveRequests) {
-    if (!summary[lr.userId]) {
-      summary[lr.userId] = { userName: users.find(u => u.id === lr.userId)?.name || 'Unknown', totalDays: 0 };
-    }
-    const days = (new Date(lr.endDate).getTime() - new Date(lr.startDate).getTime()) / (1000 * 3600 * 24) + 1;
-    summary[lr.userId].totalDays += days;
-    const leaveTypeName = LEAVE_TYPES[lr.leaveTypeId].shortCode;
-    summary[lr.userId][leaveTypeName] = (summary[lr.userId][leaveTypeName] || 0) as number + days;
+export const getLeaveSummaryReport = async (startDate: string, endDate: string, token?: string): Promise<any[]> => {
+  try {
+    const queryParams = new URLSearchParams({ startDate, endDate });
+    const response = await fetch(`${API_BASE_URL}/reports/leave-summary?${queryParams.toString()}`, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    console.error("Failed to fetch leave summary report:", error);
+    throw error;
   }
-  return Object.values(summary);
 };
 
-export const getMockAvailabilityReport = async (teamId: ShiftTeam | 'ALL', startDate: string, endDate: string): Promise<any[]> => {
-    // Mock: list users and their status (On Leave, Working Shift, Available) for each day in range.
-    const users = (await getMockUsers()).filter(u => teamId === 'ALL' || u.team === teamId);
-    const sDate = new Date(startDate);
-    const eDate = new Date(endDate);
-    const report: any[] = [];
-    
-    for (let d = new Date(sDate); d <= eDate; d = addDays(d,1)) {
-        const dateStr = formatISODate(d);
-        for (const user of users) {
-            // Check leave
-            const isOnLeave = (await getMockLeaveRequests({userId: user.id, status: LeaveRequestStatus.APPROVED}))
-                .some(lr => dateStr >= lr.startDate && dateStr <= lr.endDate);
-            // Check shift (simplified)
-            const shift = getFromStorage<Shift[]>('shifts', [])
-                .find(s => s.userId === user.id && s.date === dateStr);
-
-            let status = 'Available';
-            if (isOnLeave) status = 'On Leave';
-            else if (shift) status = `Working Shift (${shift.shiftPeriod})`;
-            // Could add BAU working hours check here too
-
-            report.push({ date: dateStr, userName: user.name, team: SHIFT_TEAMS_CONFIG[user.team]?.name, status });
-        }
-    }
-    return report;
+export const getAvailabilityReport = async (teamId: ShiftTeam | 'ALL', startDate: string, endDate: string, token?: string): Promise<any[]> => {
+  try {
+    const queryParams = new URLSearchParams({ teamId, startDate, endDate });
+    const response = await fetch(`${API_BASE_URL}/reports/availability?${queryParams.toString()}`, {
+      headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    console.error("Failed to fetch availability report:", error);
+    throw error;
+  }
 };
 
 
 // PAS Availability - Helper to get shifts for multiple users on a date
-export const getShiftsForUsersOnDate = async (userIds: string[], date: string): Promise<Shift[]> => {
-    const allShifts = getFromStorage<Shift[]>('shifts', []);
-    return allShifts.filter(shift => userIds.includes(shift.userId!) && shift.date === date);
+// This is more specific and might be part of a larger PAS availability check on the backend.
+// GET /api/shifts?userIds={id1,id2}&date={date}
+export const getShiftsForUsersOnDate = async (userIds: string[], date: string, token?: string): Promise<Shift[]> => {
+    try {
+        const queryParams = new URLSearchParams({ date });
+        userIds.forEach(id => queryParams.append('userIds', id));
+
+        const response = await fetch(`${API_BASE_URL}/shifts?${queryParams.toString()}`, {
+            headers: { ...(token && { 'Authorization': `Bearer ${token}` }) },
+        });
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error(`Failed to fetch shifts for users on date ${date}:`, error);
+        throw error;
+    }
 };
 
-// Initial data load for notifications as an example
-if (getFromStorage<NotificationMessage[]>('notifications', []).length === 0) {
-    const adminUser = initialMockUsers.find(u => u.role === UserRole.ADMIN);
-    if (adminUser) {
-        addNotificationMock({
-            userId: adminUser.id,
-            message: 'Welcome to the Workforce Management System! Set up your teams and users.',
-            type: 'info',
-            link: '/admin'
-        });
-    }
-}
-// Ensure environments have customerName populated from initial customers on first load.
-const storedEnvironments = getFromStorage<Environment[]>('environments', []);
-if (storedEnvironments.length > 0 && !storedEnvironments[0].customerName) {
-    const customers = getFromStorage<Customer[]>('customers', initialMockCustomers);
-    const updatedEnvironments = storedEnvironments.map(env => ({
-        ...env,
-        customerName: customers.find(c => c.id === env.customerId)?.name || 'Unknown Customer'
-    }));
-    setToStorage('environments', updatedEnvironments);
-}
-
-// Ensure accountAccess has userName populated for existing entries if not already.
-const storedAccountAccess = getFromStorage<AccountAccess[]>('accountAccess', []);
-if (storedAccountAccess.length > 0 && !storedAccountAccess[0].userName) {
-    const users = getFromStorage<User[]>('users', initialMockUsers);
-    const updatedAccess = storedAccountAccess.map(acc => {
-        if (!acc.userName) {
-            return {
-                ...acc,
-                userName: users.find(u => u.id === acc.userId)?.name || 'Unknown User'
-            };
-        }
-        return acc;
-    });
-    setToStorage('accountAccess', updatedAccess);
-}
+// These sections were for initializing mock data in localStorage and are no longer needed.

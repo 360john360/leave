@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { CalendarEvent, LeaveRequest, Shift, UserRole } from '../types';
-import { getMockCalendarEvents, updateMockLeaveRequestStatus } from '../services/api';
+import { CalendarEvent, LeaveRequest, Shift, UserRole, LeaveRequestStatus } from '../types'; // Added LeaveRequestStatus
+import { getCalendarEvents, updateLeaveRequestStatus } from '../services/api'; // Updated import
 import { useAuth } from '../hooks/useAuth';
 import { MONTH_NAMES, DAY_NAMES_SHORT, LEAVE_TYPES, REQUEST_STATUS_COLORS } from '../constants';
 import { addMonths, formatISODate, parseISODate, displayDateRange, isSameDay } from '../utils/dateUtils';
@@ -40,13 +40,23 @@ const CalendarView: React.FC<CalendarViewProps> = ({ onDateClick, onEventClick, 
   const [eventDetailModal, setEventDetailModal] = useState<EventDetailModalState>({ isOpen: false, date: null, events: [] });
   const [selectedLeaveRequestForAction, setSelectedLeaveRequestForAction] = useState<LeaveRequest | null>(null);
 
+  const { getToken } = useAuth(); // Get token accessor
+
   const fetchEvents = useCallback(async () => {
     if (!currentUser) return;
+    const token = getToken();
+    if (!token) {
+      console.error("Authentication token not found.");
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
       const year = currentDate.getFullYear();
       const month = currentDate.getMonth();
-      const fetchedEvents = await getMockCalendarEvents(year, month, currentUser.id);
+      // Assuming getCalendarEvents might need teamId or other filters based on currentUser
+      // For now, passing year, month, and token. Adjust if API needs more specifics like teamId.
+      const fetchedEvents = await getCalendarEvents(year, month, undefined, token);
       setEvents(fetchedEvents);
     } catch (error) {
       console.error("Failed to fetch calendar events:", error);
@@ -91,12 +101,18 @@ const CalendarView: React.FC<CalendarViewProps> = ({ onDateClick, onEventClick, 
     }
   };
 
-  const handleLeaveAction = async (action: 'APPROVE' | 'REJECT') => { // Typo 'REJECTE' fixed
+  const handleLeaveAction = async (action: 'APPROVE' | 'REJECT') => {
     if (!selectedLeaveRequestForAction || !currentUser || currentUser.role !== UserRole.MANAGER) return;
     
-    const newStatus = action === 'APPROVE' ? 'APPROVED' : 'REJECTED';
+    const token = getToken();
+    if (!token) {
+      console.error("Authentication token not found for leave action.");
+      return;
+    }
+
+    const newStatus = action === 'APPROVE' ? LeaveRequestStatus.APPROVED : LeaveRequestStatus.REJECTED;
     try {
-        await updateMockLeaveRequestStatus(selectedLeaveRequestForAction.id, newStatus as any, currentUser.id);
+        await updateLeaveRequestStatus(selectedLeaveRequestForAction.id, newStatus, currentUser.id, token);
         fetchEvents(); 
     } catch (error) {
         console.error(`Failed to ${action.toLowerCase()} leave request:`, error);

@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth, UserRole } from '../hooks/useAuth';
 import { AuditLogEntry, User } from '../types';
-import { getMockAuditLogs, getMockUsers } from '../services/api';
+import { getAuditLogs, getUsers } from '../services/api'; // Updated imports
 import Table, { Column } from '../components/common/Table';
 import Input from '../components/common/Input';
 import Select from '../components/common/Select';
@@ -11,9 +11,9 @@ import { ROWS_PER_PAGE_OPTIONS } from '../constants';
 import { ArchiveBoxIcon, FunnelIcon, MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 
 const AuditLogPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
-  const [allUsersForFilter, setAllUsersForFilter] = useState<User[]>([]); // Renamed to avoid conflict
+  const [allUsersForFilter, setAllUsersForFilter] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   
   const [filterUserId, setFilterUserId] = useState<string>('');
@@ -23,15 +23,22 @@ const AuditLogPage: React.FC = () => {
 
   const fetchAuditLogsAndUsers = useCallback(async () => {
     setIsLoading(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("No token available for fetching audit logs/users.");
+      setIsLoading(false);
+      return;
+    }
     try {
       const [logs, usersData] = await Promise.all([
-          getMockAuditLogs({ 
+          getAuditLogs({
             userId: filterUserId || undefined, 
             actionType: filterActionType || undefined 
-          }),
-          getMockUsers()
+            // Add dateFrom, dateTo if implementing date filters
+          }, token), // Pass token
+          getUsers(token) // Pass token
       ]);
-      setAuditLogs(logs); // API already sorts by timestamp desc
+      setAuditLogs(logs);
       setAllUsersForFilter([{id: '', name: 'All Users', email: '', role: UserRole.ADMIN, team: 'NONE' as any}, ...usersData]);
     } catch (error) {
       console.error("Failed to fetch audit logs or users:", error);

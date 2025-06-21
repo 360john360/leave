@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { LeaveRequest, LeaveRequestStatus, LeaveTypeId } from '../types';
-import { createMockLeaveRequest, getMockLeaveRequests } from '../services/api';
+import { createLeaveRequest, getLeaveRequests } from '../services/api'; // Updated imports
 import { LEAVE_TYPES, REQUEST_STATUS_COLORS } from '../constants';
 import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
@@ -14,7 +14,7 @@ import { displayDateRange, formatISODate, parseISODate, formatDateForInput, toda
 import { PlusCircleIcon, CalendarDaysIcon } from '@heroicons/react/24/outline';
 
 const LeaveRequestForm: React.FC<{ onSubmitSuccess: () => void, onCancel: () => void }> = ({ onSubmitSuccess, onCancel }) => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [leaveTypeId, setLeaveTypeId] = useState<LeaveTypeId>(LeaveTypeId.ANNUAL);
   const [startDate, setStartDate] = useState(todayISO());
   const [endDate, setEndDate] = useState(todayISO());
@@ -34,12 +34,22 @@ const LeaveRequestForm: React.FC<{ onSubmitSuccess: () => void, onCancel: () => 
       setError("User not authenticated.");
       return;
     }
+    const token = getToken();
+    if (!token) {
+      setError("Authentication token not found. Please log in again.");
+      return;
+    }
+
     if (new Date(endDate) < new Date(startDate)) {
       setError("End date cannot be before start date.");
       return;
     }
 
     let finalLeaveTypeId = leaveTypeId;
+    // isHalfDay and halfDayPeriod are used to determine the finalLeaveTypeId
+    // The backend will receive the finalLeaveTypeId (e.g. HALF_DAY_AM)
+    // and does not need separate isHalfDay/halfDayPeriod fields in the API payload itself.
+    // The reason for this is that the type (e.g. HALF_DAY_AM) already implies these details.
     if (isHalfDay) {
         if (startDate !== endDate) {
             setError("For half-day leave, start and end dates must be the same.");
@@ -51,14 +61,18 @@ const LeaveRequestForm: React.FC<{ onSubmitSuccess: () => void, onCancel: () => 
     setSubmitting(true);
     setError('');
     try {
-      await createMockLeaveRequest({
-        userId: currentUser.id,
+      // createLeaveRequest expects: (requestData: Omit<LeaveRequest, 'id' | 'status' | 'createdAt' | 'userName'>, requesterId: string, token?: string)
+      // The Omit type means we don't send id, status, createdAt, userName.
+      // The backend will determine/set these. `userId` is part of `requestData`.
+      await createLeaveRequest({
+        userId: currentUser.id, // This is the requesterId, also part of the main payload
         leaveTypeId: finalLeaveTypeId,
         startDate,
         endDate,
-        isHalfDay, 
+        // isHalfDay: isHalfDay, // Backend derives this from leaveTypeId if needed
+        // halfDayPeriod: isHalfDay ? halfDayPeriod : undefined, // Backend derives this from leaveTypeId if needed
         reason,
-      }, currentUser.id);
+      }, currentUser.id, token); // Pass token
       onSubmitSuccess();
     } catch (err) {
       setError("Failed to submit leave request. Please try again.");
@@ -149,16 +163,22 @@ const LeaveRequestForm: React.FC<{ onSubmitSuccess: () => void, onCancel: () => 
 
 
 const LeavePage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
   const fetchLeaveRequests = useCallback(async () => {
     if (!currentUser) return;
+    const token = getToken();
+    if (!token) {
+      console.warn("No token for fetching leave requests.");
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const requests = await getMockLeaveRequests({ userId: currentUser.id });
+      const requests = await getLeaveRequests({ userId: currentUser.id }, token); // Pass token
       setLeaveRequests(requests);
     } catch (error) {
       console.error("Failed to fetch leave requests:", error);

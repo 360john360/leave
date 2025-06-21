@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth, UserRole } from '../hooks/useAuth';
 import { TeamShiftAssignment, ShiftTeam } from '../types';
-import { generateMockRota, getGeneratedRotaMock } from '../services/api';
+import { generateRota, getGeneratedRota } from '../services/api'; // Updated imports
 // import { generateFourOnFourOffRota } from '../services/rotaService'; // Keep for future real implementation
 import Button from '../components/common/Button';
 import Input from '../components/common/Input';
@@ -11,7 +11,7 @@ import { formatISODate, parseISODate, todayISO } from '../utils/dateUtils';
 import { CalendarDaysIcon, ArrowDownTrayIcon, CogIcon } from '@heroicons/react/24/outline';
 
 const ShiftRotaPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [year, setYear] = useState(new Date().getFullYear());
   const [startDateForCycle, setStartDateForCycle] = useState(todayISO());
   const [rota, setRota] = useState<TeamShiftAssignment[]>([]);
@@ -21,8 +21,14 @@ const ShiftRotaPage: React.FC = () => {
   const fetchRota = useCallback(async () => {
     setIsLoading(true);
     setError('');
+    const token = getToken();
+    if (!token) {
+      setError('Authentication error. Please log in again.');
+      setIsLoading(false);
+      return;
+    }
     try {
-      const existingRota = await getGeneratedRotaMock(year); 
+      const existingRota = await getGeneratedRota(year, token); // Pass token
       if (existingRota.length > 0 && existingRota[0] && parseISODate(existingRota[0].date).getFullYear() === year) {
         setRota(existingRota);
       } else {
@@ -47,11 +53,16 @@ const ShiftRotaPage: React.FC = () => {
     }
     setIsLoading(true);
     setError('');
+    const token = getToken();
+    if (!token) {
+      setError('Authentication error. Please log in again.');
+      setIsLoading(false);
+      return;
+    }
     try {
       const firstDayOfCycle = parseISODate(startDateForCycle);
-      const generated = await generateMockRota(year, firstDayOfCycle); // Using mock API
+      const generated = await generateRota(year, firstDayOfCycle, token); // Pass token
       setRota(generated);
-      // In a real app, this would use rotaService.ts logic on the backend.
     } catch (err) {
       setError('Failed to generate rota. An unexpected error occurred.');
       console.error(err);

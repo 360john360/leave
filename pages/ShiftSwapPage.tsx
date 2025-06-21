@@ -3,10 +3,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth, UserRole } from '../hooks/useAuth';
 import { ShiftSwapRequest, Shift, User } from '../types';
 import { 
-    getMockShiftSwapRequests, createMockShiftSwapRequest, respondMockShiftSwapRequest, 
-    getMockCalendarEvents, 
-    getMockUsers 
-} from '../services/api';
+    getShiftSwapRequests, createShiftSwapRequest, respondShiftSwapRequest,
+    getCalendarEvents,
+    getUsers
+} from '../services/api'; // Updated imports
 import Button from '../components/common/Button';
 import Modal from '../components/common/Modal';
 import Select from '../components/common/Select';
@@ -16,7 +16,7 @@ import { parseISODate, todayISO } from '../utils/dateUtils';
 import { ArrowsRightLeftIcon, PlusCircleIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
 
 const ShiftSwapPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [swapRequests, setSwapRequests] = useState<ShiftSwapRequest[]>([]);
   const [myShifts, setMyShifts] = useState<Shift[]>([]);
   const [colleagueShifts, setColleagueShifts] = useState<Shift[]>([]);
@@ -35,10 +35,16 @@ const ShiftSwapPage: React.FC = () => {
   const fetchInitialData = useCallback(async () => {
     if (!currentUser) return;
     setIsLoading(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("No token for fetching initial shift swap data.");
+      setIsLoading(false);
+      return;
+    }
     try {
       const [reqs, users] = await Promise.all([
-        getMockShiftSwapRequests(currentUser.id),
-        getMockUsers()
+        getShiftSwapRequests(currentUser.id, token), // Pass token
+        getUsers(token) // Pass token
       ]);
       setSwapRequests(reqs);
 
@@ -47,8 +53,16 @@ const ShiftSwapPage: React.FC = () => {
 
       const today = new Date();
       // Fetch shifts for current month and next month to give more options
-      const currentMonthEvents = await getMockCalendarEvents(today.getFullYear(), today.getMonth(), currentUser.id);
-      const nextMonthEvents = await getMockCalendarEvents(today.getFullYear(), today.getMonth() + 1, currentUser.id);
+      // getCalendarEvents(year, month, teamId (optional), token)
+      // Here, teamId is not directly applicable; we need shifts for a specific user (currentUser.id)
+      // The getCalendarEvents in services/api.ts was defined as getCalendarEvents(year, month, teamId, token)
+      // It needs to be flexible enough or we need another endpoint/logic for user-specific shifts.
+      // For now, assuming getCalendarEvents can work if teamId is undefined and it implicitly uses the token's user or fetches broadly.
+      // This might need refinement based on the actual API's capabilities for getCalendarEvents.
+      // A more direct `getShiftsForUser(userId, fromDate, toDate, token)` would be better.
+      // Let's use current getCalendarEvents and filter client-side as per mock logic.
+      const currentMonthEvents = await getCalendarEvents(today.getFullYear(), today.getMonth(), undefined, token); // Pass token
+      const nextMonthEvents = await getCalendarEvents(today.getFullYear(), today.getMonth() + 1, undefined, token); // Pass token
       
       const userShifts = [...currentMonthEvents, ...nextMonthEvents]
         .filter(event => event.type === 'shift' && event.shift && event.shift.userId === currentUser.id)
@@ -75,12 +89,20 @@ const ShiftSwapPage: React.FC = () => {
             setColleagueShifts([]);
             return;
         }
-        setIsLoading(true); // Indicate loading for colleague shifts
+        setIsLoading(true);
+        const token = getToken();
+        if (!token) {
+            console.warn("No token for fetching colleague shifts.");
+            setIsLoading(false);
+            return;
+        }
         try {
             const today = new Date();
             // Fetch shifts for current month and next month for colleague
-            const currentMonthEvents = await getMockCalendarEvents(today.getFullYear(), today.getMonth(), selectedColleagueId);
-            const nextMonthEvents = await getMockCalendarEvents(today.getFullYear(), today.getMonth() + 1, selectedColleagueId);
+            // Similar to above, using getCalendarEvents and filtering.
+            // Ideally, backend provides a more direct way to get a user's shifts.
+            const currentMonthEvents = await getCalendarEvents(today.getFullYear(), today.getMonth(), undefined, token); // Pass token
+            const nextMonthEvents = await getCalendarEvents(today.getFullYear(), today.getMonth() + 1, undefined, token); // Pass token
 
             const colleagueUserShifts = [...currentMonthEvents, ...nextMonthEvents]
                 .filter(event => event.type === 'shift' && event.shift && event.shift.userId === selectedColleagueId)
@@ -109,7 +131,13 @@ const ShiftSwapPage: React.FC = () => {
         return;
     }
     setFormError('');
-    setIsLoading(true); // For overall modal operation
+    setIsLoading(true);
+    const token = getToken();
+    if (!token) {
+        setFormError('Authentication error. Please log in again.');
+        setIsLoading(false);
+        return;
+    }
     try {
         const myShift = myShifts.find(s => s.id === selectedMyShiftId);
         const colleagueShift = colleagueShifts.find(s => s.id === selectedColleagueShiftId);
@@ -120,15 +148,15 @@ const ShiftSwapPage: React.FC = () => {
             return;
         }
 
-      await createMockShiftSwapRequest({
+      await createShiftSwapRequest({ // Use new function
         requesterId: currentUser.id,
         responderId: selectedColleagueId,
         requesterShiftId: selectedMyShiftId,
-        requesterShiftDate: myShift.date,
+        requesterShiftDate: myShift.date, // Backend might re-verify or just use IDs
         responderShiftId: selectedColleagueShiftId,
-        responderShiftDate: colleagueShift.date,
+        responderShiftDate: colleagueShift.date, // Backend might re-verify or just use IDs
         reason: swapReason,
-      });
+      }, token); // Pass token
       setIsModalOpen(false);
       fetchInitialData(); 
       setSelectedMyShiftId('');
@@ -145,9 +173,16 @@ const ShiftSwapPage: React.FC = () => {
 
   const handleRespondToSwap = async (swapId: string, accepted: boolean) => {
     if (!currentUser) return;
-    setIsResponding(true); // Specific loading state for this action
+    setIsResponding(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("No token for responding to shift swap.");
+      // Optionally set an error message for the user
+      setIsResponding(false);
+      return;
+    }
     try {
-      await respondMockShiftSwapRequest(swapId, currentUser.id, accepted);
+      await respondShiftSwapRequest(swapId, currentUser.id, accepted, token); // Pass token
       fetchInitialData(); 
     } catch (error) {
       console.error("Failed to respond to shift swap:", error);

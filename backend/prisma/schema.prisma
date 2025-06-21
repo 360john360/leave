@@ -1,0 +1,200 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  PAS
+  VAR_SHIFT
+  VAR_BAU
+}
+
+enum ShiftTeam {
+  A
+  B
+  C
+  D
+  BAU
+  NONE
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      UserRole
+  team      ShiftTeam
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  leaveRequests       LeaveRequest[]    @relation("UserLeaveRequests")
+  approvedLeaveRequests LeaveRequest[] @relation("ManagerApprovedLeaveRequests")
+  shifts              Shift[]           @relation("UserShifts")
+  accountAccess       AccountAccess[]   @relation("UserAccountAccess")
+  requestedSwaps      ShiftSwap[]       @relation("RequesterSwaps")
+  respondedSwaps      ShiftSwap[]       @relation("ResponderSwaps")
+  notifications       Notification[]     @relation("UserNotifications")
+  auditLogs           AuditLog[]        @relation("UserAuditLogs")
+}
+
+enum LeaveTypeId {
+  ANNUAL
+  SICK
+  TRAINING
+  HALF_DAY_AM
+  HALF_DAY_PM
+  COMPASSIONATE
+  MATERNITY_PATERNITY
+  UNPAID
+  TOIL
+}
+
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model LeaveRequest {
+  id           String             @id @default(uuid())
+  userId       String
+  user         User               @relation("UserLeaveRequests", fields: [userId], references: [id])
+  leaveTypeId  LeaveTypeId
+  startDate    DateTime
+  endDate      DateTime
+  isHalfDay    Boolean            @default(false)
+  halfDayPeriod String?           // AM or PM, null if not half day
+  reason       String?
+  status       LeaveRequestStatus @default(PENDING)
+  managerId    String?
+  manager      User?              @relation("ManagerApprovedLeaveRequests", fields: [managerId], references: [id])
+  approvedAt   DateTime?
+  createdAt    DateTime           @default(now())
+  retrospective Boolean           @default(false)
+}
+
+enum ShiftPeriod {
+  AM
+  PM
+  OFF
+}
+
+model Shift {
+  id             String      @id @default(uuid())
+  date           DateTime
+  userId         String?
+  user           User?       @relation("UserShifts", fields: [userId], references: [id])
+  teamId         ShiftTeam?
+  shiftPeriod    ShiftPeriod
+  startTime      DateTime?
+  endTime        DateTime?
+  originalUserId String?
+  
+  // Relations for shift swaps
+  requesterSwaps ShiftSwap[] @relation("RequesterShift")
+  responderSwaps ShiftSwap[] @relation("ResponderShift")
+}
+
+model Customer {
+  id           String        @id @default(uuid())
+  name         String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  // Relations
+  environments  Environment[] @relation("CustomerEnvironments")
+}
+
+model Environment {
+  id                  String          @id @default(uuid())
+  customerId          String
+  customer            Customer        @relation("CustomerEnvironments", fields: [customerId], references: [id])
+  name                String
+  requestInstructions String
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  
+  // Relations
+  accountAccess       AccountAccess[] @relation("EnvironmentAccess")
+}
+
+enum AccountAccessStatusValue {
+  NONE
+  REQUESTED
+  GRANTED
+  REVOKED
+}
+
+model AccountAccess {
+  id            String                  @id @default(uuid())
+  userId        String
+  user          User                    @relation("UserAccountAccess", fields: [userId], references: [id])
+  environmentId String
+  environment   Environment             @relation("EnvironmentAccess", fields: [environmentId], references: [id])
+  status        AccountAccessStatusValue
+  lastUpdatedAt DateTime                @default(now())
+}
+
+model ShiftSwap {
+  id               String   @id @default(uuid())
+  requesterId      String
+  requester        User     @relation("RequesterSwaps", fields: [requesterId], references: [id])
+  responderId      String
+  responder        User     @relation("ResponderSwaps", fields: [responderId], references: [id])
+  requesterShiftId String
+  requesterShift   Shift    @relation("RequesterShift", fields: [requesterShiftId], references: [id])
+  responderShiftId String
+  responderShift   Shift    @relation("ResponderShift", fields: [responderShiftId], references: [id])
+  status           String   // PENDING, ACCEPTED, REJECTED, CANCELLED
+  reason           String?
+  createdAt        DateTime @default(now())
+}
+
+enum NotificationType {
+  INFO
+  SUCCESS
+  WARNING
+  ERROR
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  user      User             @relation("UserNotifications", fields: [userId], references: [id])
+  message   String
+  link      String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  type      NotificationType @default(INFO)
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  timestamp    DateTime @default(now())
+  userId       String?
+  user         User?    @relation("UserAuditLogs", fields: [userId], references: [id])
+  actionType   String
+  details      String
+  targetEntityId String?
+}
+
+model TeamShiftAssignment {
+  id            String    @id @default(uuid())
+  date          DateTime
+  dayShiftTeam  ShiftTeam?
+  nightShiftTeam ShiftTeam?
+  createdAt     DateTime  @default(now())
+}

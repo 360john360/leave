@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { useAuth, UserRole, ShiftTeam } from '../hooks/useAuth';
-import { getMockLeaveSummaryReport, getMockAvailabilityReport } from '../services/api';
+import { getLeaveSummaryReport, getAvailabilityReport } from '../services/api'; // Updated imports
 import Button from '../components/common/Button';
 import Input from '../components/common/Input';
 import Select from '../components/common/Select';
@@ -14,7 +14,7 @@ import { DocumentChartBarIcon, ArrowDownTrayIcon, FunnelIcon, TableCellsIcon } f
 type ReportType = 'leave_summary' | 'availability';
 
 const ReportsPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [reportType, setReportType] = useState<ReportType>('leave_summary');
   const [startDate, setStartDate] = useState(formatISODate(new Date(new Date().getFullYear(), 0, 1)));
   const [endDate, setEndDate] = useState(todayISO());
@@ -32,6 +32,12 @@ const ReportsPage: React.FC = () => {
     setError('');
     setReportData([]);
     setReportColumns([]);
+    const token = getToken();
+    if (!token) {
+        setError("Authentication error. Please log in again.");
+        setIsLoading(false);
+        return;
+    }
 
     if (new Date(endDate) < new Date(startDate)) {
         setError("End date cannot be before start date.");
@@ -41,29 +47,33 @@ const ReportsPage: React.FC = () => {
 
     try {
       if (reportType === 'leave_summary') {
-        const data = await getMockLeaveSummaryReport(startDate, endDate);
+        const data = await getLeaveSummaryReport(startDate, endDate, token); // Pass token
         setReportData(data);
-        if (data.length > 0) {
+        if (data.length > 0 && data[0] !== null && typeof data[0] === 'object') { // Ensure data[0] is an object
             const dynamicColumns: Column<any>[] = Object.keys(data[0])
-                .filter(key => key !== 'userId')
+                .filter(key => key !== 'userId') // Assuming 'userId' might be a field to exclude
                 .map(key => ({
-                    header: key.replace(/([A-Z]+)/g, " $1").replace(/([A-Z][a-z])/g, " $1").replace(/^./, str => str.toUpperCase()).trim(), // Prettify header
+                    header: key.replace(/([A-Z]+)/g, " $1").replace(/([A-Z][a-z])/g, " $1").replace(/^./, str => str.toUpperCase()).trim(),
                     accessor: key as keyof any,
                     cellClassName: typeof data[0][key] === 'number' ? 'text-right' : '',
                     headerClassName: typeof data[0][key] === 'number' ? 'text-right' : '',
                 }));
             setReportColumns(dynamicColumns);
+        } else if (data.length > 0) { // Handle cases where data might not be objects (e.g. simple array)
+            setReportColumns([{ header: 'Value', accessor: (item: any) => String(item) }]);
         }
       } else if (reportType === 'availability') {
-        const data = await getMockAvailabilityReport(selectedTeam, startDate, endDate);
+        const data = await getAvailabilityReport(selectedTeam, startDate, endDate, token); // Pass token
         setReportData(data);
-         if (data.length > 0) {
+         if (data.length > 0 && data[0] !== null && typeof data[0] === 'object') {
             setReportColumns([
                 { header: 'Date', accessor: 'date' as keyof any, cellClassName: 'font-medium' },
                 { header: 'User Name', accessor: 'userName' as keyof any },
                 { header: 'Team', accessor: 'team' as keyof any },
                 { header: 'Status', accessor: 'status' as keyof any, cellClassName: 'max-w-xs truncate' },
             ]);
+        } else if (data.length > 0) {
+             setReportColumns([{ header: 'Value', accessor: (item: any) => String(item) }]);
         }
       }
     } catch (err) {

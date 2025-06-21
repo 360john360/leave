@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth, UserRole } from '../hooks/useAuth';
 import { LeaveRequest, LeaveRequestStatus } from '../types';
-import { getMockLeaveRequests, updateMockLeaveRequestStatus } from '../services/api';
+import { getLeaveRequests, updateLeaveRequestStatus } from '../services/api'; // Updated imports
 import { LEAVE_TYPES, REQUEST_STATUS_COLORS } from '../constants';
 import Button from '../components/common/Button';
 import Table, { Column } from '../components/common/Table';
@@ -13,7 +13,7 @@ import Textarea from '../components/common/Textarea';
 import { CheckCircleIcon, XCircleIcon, InboxArrowDownIcon, FunnelIcon } from '@heroicons/react/24/outline';
 
 const ApproveLeavePage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
   const [allRequests, setAllRequests] = useState<LeaveRequest[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<LeaveRequestStatus | 'ALL'>(LeaveRequestStatus.PENDING);
@@ -24,9 +24,19 @@ const ApproveLeavePage: React.FC = () => {
 
   const fetchRequests = useCallback(async () => {
     if (!currentUser || currentUser.role !== UserRole.MANAGER) return;
+    const token = getToken();
+    if (!token) {
+      console.warn("No token available for fetching leave requests.");
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(true);
     try {
-      const teamRequests = await getMockLeaveRequests(); 
+      // Assuming getLeaveRequests can be filtered by team or returns all for manager
+      // For now, fetching all and then could filter client-side if needed, or backend handles team scope.
+      // The API endpoint GET /api/leave-requests?userId={userId}&teamId={teamId}&status={status}
+      // suggests backend can filter. We might need to pass currentUser.teamId if available.
+      const teamRequests = await getLeaveRequests(undefined, token); // Pass token
       setAllRequests(teamRequests.sort((a,b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
     } catch (error) {
       console.error("Failed to fetch leave requests for approval:", error);
@@ -43,11 +53,18 @@ const ApproveLeavePage: React.FC = () => {
   const handleAction = async () => {
     if (!actionableRequest || !actionType || !currentUser) return;
     setActionError('');
+    const token = getToken();
+    if (!token) {
+      console.warn("No token available for leave action.");
+      setActionError("Authentication error. Please log in again.");
+      return;
+    }
 
     const newStatus = actionType === 'APPROVE' ? LeaveRequestStatus.APPROVED : LeaveRequestStatus.REJECTED;
     try {
       // In a real app, rejectionReason would be passed to the API or used in the notification.
-      await updateMockLeaveRequestStatus(actionableRequest.id, newStatus, currentUser.id);
+      // The backend should handle sending notification with reason if provided.
+      await updateLeaveRequestStatus(actionableRequest.id, newStatus, currentUser.id, token); // Pass token
       fetchRequests(); 
     } catch (error) {
       console.error(`Failed to ${actionType.toLowerCase()} request:`, error);

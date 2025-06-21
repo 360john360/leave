@@ -3,9 +3,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { Customer, Environment, AccountAccess, AccountAccessStatusValue, User, UserRole as AppUserRole, LeaveRequest, LeaveRequestStatus, Shift, ShiftPeriod } from '../types';
 import { 
-    getMockCustomers, getMockEnvironments, getMockAccountAccess, updateMockAccountAccessStatus, 
-    getMockUsers, getMockLeaveRequests, getShiftsForUsersOnDate
-} from '../services/api';
+    getCustomers, getEnvironments, getAccountAccess, updateAccountAccessStatus,
+    getUsers, getLeaveRequests, getShiftsForUsersOnDate
+} from '../services/api'; // Updated imports
 import Select from '../components/common/Select';
 import Table, { Column } from '../components/common/Table';
 import Button from '../components/common/Button';
@@ -51,9 +51,11 @@ const generateTimeSlots = (): {value: string, label: string}[] => {
 };
 const timeSlots = generateTimeSlots();
 
+const timeSlots = generateTimeSlots();
+
 
 const AccountTrackerPage: React.FC = () => {
-  const { currentUser } = useAuth();
+  const { currentUser, getToken } = useAuth(); // Added getToken
 
   // State for Admin/Manager/PAS view (Team Access Tracker)
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -92,10 +94,16 @@ const AccountTrackerPage: React.FC = () => {
   const fetchCustomersForAdminView = useCallback(async () => {
     if (isEngineerView || isPasView) return;
     setIsLoading(true);
+    const token = getToken();
+    if (!token && (currentUser?.role === AppUserRole.ADMIN || currentUser?.role === AppUserRole.MANAGER)) { // PAS is handled in its own fetch
+      console.warn("Admin/Manager view: No token for fetching initial data.");
+      setIsLoading(false);
+      return;
+    }
     try {
       const [custData, usersData] = await Promise.all([
-        getMockCustomers(),
-        getMockUsers()
+        getCustomers(token), // Pass token
+        getUsers(token)      // Pass token
       ]);
       setCustomers(custData);
       if (custData.length > 0 && !selectedCustomerId) {
@@ -118,8 +126,14 @@ const AccountTrackerPage: React.FC = () => {
       return;
     }
     setIsLoading(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("Admin/Manager view: No token for fetching environments.");
+      setIsLoading(false);
+      return;
+    }
     try {
-      const envData = await getMockEnvironments(selectedCustomerId);
+      const envData = await getEnvironments(selectedCustomerId, token); // Pass token
       setAdminEnvironments(envData);
       if (envData.length > 0) {
         setSelectedEnvironmentId(prevEnvId => envData.find(e => e.id === prevEnvId) ? prevEnvId : envData[0].id);
@@ -135,8 +149,15 @@ const AccountTrackerPage: React.FC = () => {
       setTableAccountAccessList([]); return;
     }
     setIsLoadingAccessDetails(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("Admin/Manager view: No token for fetching account access.");
+      setIsLoadingAccessDetails(false);
+      return;
+    }
     try {
-      const accessData = await getMockAccountAccess({ environmentId: selectedEnvironmentId });
+      // Params for getAccountAccess: { environmentId?: string; userId?: string }, token
+      const accessData = await getAccountAccess({ environmentId: selectedEnvironmentId }, token); // Pass token
       const usersToDisplay = filterByUserId ? allRelevantUsers.filter(u => u.id === filterByUserId) : allRelevantUsers.filter(u => u.id !== ''); 
 
       const fullAccessList = usersToDisplay.map(user => {
@@ -158,11 +179,17 @@ const AccountTrackerPage: React.FC = () => {
   const fetchMyAccessOverview = useCallback(async () => {
     if (!isEngineerView || !currentUser) return;
     setIsLoadingAccessDetails(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("Engineer view: No token for fetching access overview.");
+      setIsLoadingAccessDetails(false);
+      return;
+    }
     try {
         const [allCustomers, allEnvs, myAccessRecordsResponse] = await Promise.all([
-            getMockCustomers(),
-            getMockEnvironments(), 
-            getMockAccountAccess({ userId: currentUser.id })
+            getCustomers(token), // Pass token
+            getEnvironments(undefined, token), // Pass token, undefined for customerId to get all
+            getAccountAccess({ userId: currentUser.id }, token) // Pass token
         ]);
 
         const myAccessRecords = myAccessRecordsResponse;
@@ -200,10 +227,16 @@ const AccountTrackerPage: React.FC = () => {
   const fetchInitialDataForPasView = useCallback(async () => {
     if (!isPasView) return;
     setIsLoadingPasView(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("PAS view: No token for fetching initial data.");
+      setIsLoadingPasView(false);
+      return;
+    }
     try {
         const [custData, usersData] = await Promise.all([
-            getMockCustomers(),
-            getMockUsers()
+            getCustomers(token), // Pass token
+            getUsers(token)      // Pass token
         ]);
         setCustomers(custData); // Reuse customers state
         if (custData.length > 0 && !pasSelectedCustomerId) {
@@ -219,9 +252,15 @@ const AccountTrackerPage: React.FC = () => {
         setPasEnvironments([]); setPasSelectedEnvironmentId('');
         return;
     }
-    setIsLoadingPasView(true); // Can use the same loading state for simplicity here
+    setIsLoadingPasView(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("PAS view: No token for fetching environments.");
+      setIsLoadingPasView(false);
+      return;
+    }
     try {
-        const envData = await getMockEnvironments(pasSelectedCustomerId);
+        const envData = await getEnvironments(pasSelectedCustomerId, token); // Pass token
         setPasEnvironments(envData);
         if (envData.length > 0) {
             setPasSelectedEnvironmentId(prevEnvId => envData.find(e => e.id === prevEnvId) ? prevEnvId : envData[0].id);
@@ -236,20 +275,30 @@ const AccountTrackerPage: React.FC = () => {
     if (!isPasView || !pasSelectedEnvironmentId || !pasSelectedDate || !pasSelectedTime || pasEngineers.length === 0) return;
     setIsLoadingPasResults(true);
     setPasAvailabilityResults([]);
+    const token = getToken();
+    if (!token) {
+      console.warn("PAS view: No token for checking availability.");
+      setIsLoadingPasResults(false);
+      return;
+    }
     try {
         const engineerIds = pasEngineers.map(e => e.id);
-        const [leaveRequests, accountAccessData, shiftsData] = await Promise.all([
-            getMockLeaveRequests({ status: LeaveRequestStatus.APPROVED }), // All approved leaves
-            getMockAccountAccess({ environmentId: pasSelectedEnvironmentId }),
-            getShiftsForUsersOnDate(engineerIds, pasSelectedDate)
+        // The README suggests a dedicated backend endpoint for PAS availability:
+        // GET /api/pas/availability?customerId={id}&environmentId={id}&dateTime={isoDateTimeString}
+        // This is preferred. If not available, the multi-call approach below is a fallback.
+        // For now, sticking to multi-call as per existing mock logic structure.
+        const [fetchedLeaveRequests, accountAccessData, shiftsData] = await Promise.all([ // Renamed leaveRequestsData
+            getLeaveRequests({ status: LeaveRequestStatus.APPROVED }, token), // Pass token
+            getAccountAccess({ environmentId: pasSelectedEnvironmentId }, token), // Pass token
+            getShiftsForUsersOnDate(engineerIds, pasSelectedDate, token) // Pass token
         ]);
 
         const results: PasAvailabilityResult[] = pasEngineers.map(engineer => {
-            const isOnLeave = leaveRequests.some(lr => 
+            const isOnLeave = fetchedLeaveRequests.some(lr => // Use renamed variable
                 lr.userId === engineer.id &&
                 pasSelectedDate >= lr.startDate && pasSelectedDate <= lr.endDate
             );
-            const leaveRecord = leaveRequests.find(lr => 
+            const leaveRecord = fetchedLeaveRequests.find(lr => // Use renamed variable
                 lr.userId === engineer.id &&
                 pasSelectedDate >= lr.startDate && pasSelectedDate <= lr.endDate
             );
@@ -349,9 +398,17 @@ const AccountTrackerPage: React.FC = () => {
       setTimeout(() => setUpdateError(''), 3000);
       return;
     }
-    setIsLoadingAccessDetails(true); 
+    setIsLoadingAccessDetails(true);
+    const token = getToken();
+    if (!token) {
+      console.warn("No token for updating account access status.");
+      setUpdateError("Authentication error. Please log in again.");
+      setIsLoadingAccessDetails(false);
+      setTimeout(() => setUpdateError(''), 3000);
+      return;
+    }
     try {
-      await updateMockAccountAccessStatus(userId, environmentId, newStatus);
+      await updateAccountAccessStatus(userId, environmentId, newStatus, token); // Pass token
       if (isEngineerView) {
         fetchMyAccessOverview(); 
       } else if (!isPasView) { 
